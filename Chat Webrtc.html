@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .connection-panel, .chat-panel {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .chat-area {
+            height: 300px;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 10px;
+            overflow-y: auto;
+        }
+        .message-form {
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 8px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .message {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .received {
+            background-color: #f1f1f1;
+        }
+        .sent {
+            background-color: #d4edda;
+            text-align: right;
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Chat P2P</h1>
+        
+        <div class="connection-panel">
+            <h2>Conexão</h2>
+            <div>
+                <p>Seu ID: <span id="my-id">Conectando...</span></p>
+                <div>
+                    <input type="text" id="peer-id" placeholder="ID do amigo">
+                    <button id="connect-btn">Conectar</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chat-panel">
+            <h2>Chat</h2>
+            <div class="chat-area" id="chat-area">
+                <div class="message status">Aguardando conexão...</div>
+            </div>
+            <div class="message-form">
+                <input type="text" id="message-input" placeholder="Digite sua mensagem" disabled>
+                <button id="send-btn" disabled>Enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const meuIdElemento = document.getElementById('my-id');
+            const inputIdPeer = document.getElementById('peer-id');
+            const botaoConectar = document.getElementById('connect-btn');
+            const areaDeChat = document.getElementById('chat-area');
+            const campoDeMensagem = document.getElementById('message-input');
+            const botaoEnviar = document.getElementById('send-btn');
+            
+            let conexao = null;
+            let peer = null;
+            let ultimoIdPeer = null;
+            let tentativasReconexao = 0;
+            const maxTentativas = 5;
+            const tempoEntreConexoes = 3000; 
+            
+            function inicializarPeer() {
+                if (peer) {
+                    peer.destroy();
+                }
+
+                peer = new Peer({
+                    debug: 2,
+                    config: {
+                        'iceServers': [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' },
+                            { urls: 'stun:stun3.l.google.com:19302' },
+                            { urls: 'stun:stun4.l.google.com:19302' }
+                        ]
+                    }
+                });
+
+                peer.on('open', (id) => {
+                    meuIdElemento.textContent = id;
+                    adicionarMensagemDeStatus('Conectado! Compartilhe seu ID com um amigo para iniciar o chat.');
+                    tentativasReconexao = 0;
+
+                    
+                    if (ultimoIdPeer) {
+                        tentarConectar(ultimoIdPeer);
+                    }
+                });
+
+                peer.on('connection', (conexaoPeer) => {
+                    conexao = conexaoPeer;
+                    ultimoIdPeer = conexao.peer;
+                    configurarConexao();
+                    adicionarMensagemDeStatus(`${conexao.peer} conectou a você.`);
+                });
+
+                peer.on('error', (erro) => {
+                    adicionarMensagemDeStatus(`Erro: ${erro.type}`);
+                    console.error(erro);
+                    
+                    if (erro.type === 'peer-unavailable' && tentativasReconexao < maxTentativas) {
+                        setTimeout(() => tentarReconectar(), tempoEntreConexoes);
+                    }
+                });
+
+                peer.on('disconnected', () => {
+                    adicionarMensagemDeStatus('Desconectado do servidor. Tentando reconectar...');
+                    setTimeout(() => {
+                        peer.reconnect();
+                    }, 1000);
+                });
+            }
+
+            function tentarReconectar() {
+                if (ultimoIdPeer && tentativasReconexao < maxTentativas) {
+                    tentativasReconexao++;
+                    adicionarMensagemDeStatus(`Tentativa de reconexão ${tentativasReconexao}/${maxTentativas}...`);
+                    tentarConectar(ultimoIdPeer);
+                }
+            }
+
+            function tentarConectar(idPeer) {
+                try {
+                    conexao = peer.connect(idPeer, {
+                        reliable: true,
+                        serialization: 'json'
+                    });
+                    configurarConexao();
+                } catch (erro) {
+                    adicionarMensagemDeStatus(`Erro ao conectar: ${erro.message}`);
+                }
+            }
+
+            botaoConectar.addEventListener('click', () => {
+                const idPeer = inputIdPeer.value.trim();
+                if (!idPeer) {
+                    adicionarMensagemDeStatus('Por favor, insira um ID válido.');
+                    return;
+                }
+                
+                ultimoIdPeer = idPeer;
+                tentativasReconexao = 0;
+                tentarConectar(idPeer);
+            });
+
+            function configurarConexao() {
+                if (!conexao) return;
+
+                conexao.on('open', () => {
+                    adicionarMensagemDeStatus(`Conectado a ${conexao.peer}`);
+                    ativarChat();
+                    tentativasReconexao = 0;
+                });
+                
+                conexao.on('data', (dados) => {
+                    adicionarMensagem(dados, 'received');
+                });
+                
+                conexao.on('close', () => {
+                    adicionarMensagemDeStatus('Conexão fechada. Tentando reconectar...');
+                    desativarChat();
+                    if (tentativasReconexao < maxTentativas) {
+                        setTimeout(() => tentarReconectar(), tempoEntreConexoes);
+                    }
+                });
+                
+                conexao.on('error', (erro) => {
+                    adicionarMensagemDeStatus(`Erro de conexão: ${erro}`);
+                    console.error(erro);
+                });
+            }
+
+            botaoEnviar.addEventListener('click', enviarMensagem);
+            campoDeMensagem.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    enviarMensagem();
+                }
+            });
+            
+            function enviarMensagem() {
+                const mensagem = campoDeMensagem.value.trim();
+                if (!mensagem || !conexao) return;
+                
+                try {
+                    conexao.send(mensagem);
+                    adicionarMensagem(mensagem, 'sent');
+                    campoDeMensagem.value = '';
+                } catch (erro) {
+                    adicionarMensagemDeStatus(`Erro ao enviar mensagem: ${erro.message}`);
+                }
+            }
+            
+            function adicionarMensagem(mensagem, tipo) {
+                const elementoMensagem = document.createElement('div');
+                elementoMensagem.classList.add('message', tipo);
+                elementoMensagem.textContent = mensagem;
+                areaDeChat.appendChild(elementoMensagem);
+                rolarParaBaixo();
+            }
+            
+            function adicionarMensagemDeStatus(mensagem) {
+                const elementoStatus = document.createElement('div');
+                elementoStatus.classList.add('message', 'status');
+                elementoStatus.textContent = mensagem;
+                areaDeChat.appendChild(elementoStatus);
+                rolarParaBaixo();
+            }
+            
+            function rolarParaBaixo() {
+                areaDeChat.scrollTop = areaDeChat.scrollHeight;
+            }
+            
+            function ativarChat() {
+                campoDeMensagem.disabled = false;
+                botaoEnviar.disabled = false;
+                campoDeMensagem.focus();
+            }
+            
+            function desativarChat() {
+                campoDeMensagem.disabled = true;
+                botaoEnviar.disabled = true;
+            }
+
+           
+            inicializarPeer();
+
+           
+            window.addEventListener('beforeunload', () => {
+                if (conexao) {
+                    conexao.send('O usuário saiu do chat');
+                }
+            });
+
+            
+            window.addEventListener('online', () => {
+                adicionarMensagemDeStatus('Conexão de internet restaurada. Reconectando...');
+                inicializarPeer();
+            });
+        });
+    </script>
+</body>
+</html>
